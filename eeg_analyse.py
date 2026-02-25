@@ -1,9 +1,16 @@
-﻿import pandas as pd
+﻿from pickletools import stackslice
+from matplotlib.lines import lineStyles
+import pandas as pd
 import numpy as np
 import os
 import glob
+import matplotlib
+import matplotlib.pyplot as plt
+
+matplotlib.use('Agg')
 
 DATA_FOLDER = "D:\WORK\egg_analyse\EEG RAW DATA (INFOPOVODI)\EEG RAW DATA (INFOPOVODI)"
+OUTPUT_FOLDER = os.path.join(DATA_FOLDER, "results_ERP")
 
 STIMULI = [
     'VK_JAPAN_INFO',   'VK_JAPAN_COM',   'VK_JAPAN_THR',
@@ -41,13 +48,16 @@ EMOTION_COLS = [
     'PM.Focus.Scaled'
 ]
 
-SFREQ = 128     # частота дискретизации
-PRE_MS = 200   # мс до стимула
-POST_MS = 1000  # мс после стимула
+SFREQ = 128                                     # частота дискретизации
+PRE_MS = 200                                    # мс до стимула
+POST_MS = 1000                                  # мс после стимула
+time_ms = np.arange(-25, 128) / SFREQ * 1000    # ось времени в мс
+COLORS = plt.cm.tab20.colors[:14]               # цвета для каналов - 14 цветов
 
 # Номера всех респондентов: 'pilot' = 0, остальные 1-16
 RESPONDENTS = ['0', '1', '2', '3', '4', '5', '6', '7',
                '8', '9', '10', '11', '12', '13', '14', '15', '16']
+
 
 # Загрузка файлов
 def load_raw(filepath):
@@ -138,28 +148,117 @@ def baseline_correct(epoch):
 
     return epoch - baseline_mean
 
+def collect_all_epochs(folder, respondents):
+    """
+    Проходим по всем ремпондентам и собираем эпохи
+    """
+    all_epochs = {stim: [] for stim in STIMULI}
 
-# ТЕСТ НА ОДНОМ РЕСПОНДЕНТЕ
+    for resp_id in respondents:
+        raw_path, marker_path = find_files(folder, resp_id)
 
-raw_path, marker_path = find_files(DATA_FOLDER, '1')
-raw = load_raw(raw_path)
-markers = load_markers(marker_path)
-events = get_stimulus_events(markers)
+        if raw_path is None or marker_path is None:
+            print(f"  [!] Респондент {resp_id}: файлы не найдены")
+            continue
 
-print("Найденные стимулы для респондента 1:")
-print(events)
-print(f"\nВсего стимулов: {len(events)}")
-print(f"Нашли все 24? {set(events['stimulus_name']) == set(STIMULI)}")
+        print(f"Загрузка респондента {resp_id}.. ", end = ' ')
 
-# Тест на одном стимуле
-first_stim = events.iloc[0]
-idx = latency_to_sample_index(raw, first_stim['latency'])
-epoch = extract_epoch_eeg(raw, idx)
-epoch_bc = baseline_correct(epoch)
+        try:
+            raw     = load_raw(raw_path)
+            markers = load_markers(marker_path)
+            events  = get_stimulus_events(markers)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            continue
 
-print(f"\nСтимул: {first_stim['stimulus_name']}")
-print(f"Индекс в raw_df: {idx}")
-print(f"Форма эпохи: {epoch.shape}")  # должно быть (153, 14)
-print(f"Форма после baseline: {epoch_bc.shape}")
-print(f"Среднее baseline до коррекции: {epoch[:25].mean():.4f} мкВ")
-print(f"Среднее baseline после коррекции: {epoch_bc[:25].mean():.6f} мкВ")  # должно быть ~0
+        ok_count = 0
+        for _, row in events.iterrows():
+            stim_name = row['stimulus_name']
+            latency = row['latency']
+
+            idx = latency_to_sample_index(raw, latency)
+            epoch = extract_epoch_eeg(raw, idx)
+
+            if epoch is None:
+                continue
+
+            epoch_bc = baseline_correct(epoch)
+            all_epochs[stim_name].append(epoch_bc)
+            ok_count += 1
+
+        print(f"OK ({ok_count}/24 stimulus)")
+    return all_epochs
+
+def compute_erp(epochs_list):
+    """
+    Усредняет эпохи по всем респондентам
+    """
+    if len(epochs_list) == 0:
+        return None
+
+    stacked = np.stack(epochs_list, axis=0)
+
+    return stacked.mean(axis=0)
+    
+def plot_erp(stim_name, erp, n_respondents, output_folder):
+    """
+    Строит ERP-график для одного стимула
+    """
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    for ch_idx, ch_name in enumerate(CH_NAMES):
+        ax.plot(
+            time_ms,
+            erp[:, ch_idx],
+            color=COLORS[ch_idx],
+            linewidth=1.2,
+            label=ch_name
+        )
+
+    ax.axvline(x=0, color='red', linewidth=1.5, linestyle='--', label='Stimul')
+    ax.axhline(y=0, color='gray', linewidth=0.8, linestyle='-', alpha=0.5)
+    ax.axvspan(time_ms[0], 0, alpha=0.08, color='gray', label='Baseline')
+
+    ax.set_title(f'ERP - {stim_name} (n={n_respondents})', fontsize=14)
+    ax.set_xlabel('Время (мс)', fontsize=12)
+    ax.set_ylabel('Амплитуда (мкВ)', fontsize=12)
+    ax.legend(loc='upper right', ncol=2, fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    # Подписи делений оси X каждые 100мс
+    ax.set_xticks(range(-200, 1001, 100))
+
+    plt.tight_layout()
+
+    # Сохраняем в файл
+    save_path = os.path.join(output_folder, f"ERP_{stim_name}.png")
+    plt.savefig(save_path, dpi=150)
+    plt.close(fig)   # закрываем, чтобы не накапливать в памяти
+    return save_path
+
+print("Собираем эпохи по всем респондентам...")
+all_epochs = collect_all_epochs(DATA_FOLDER, RESPONDENTS)
+
+print("\nКоличество эпох на стимул:")
+for stim, epochs in all_epochs.items():
+    print(f"  {stim}: {len(epochs)} респондентов")
+
+erp_dict = {}
+for stim, epochs in all_epochs.items():
+    erp_dict[stim] = compute_erp(epochs)
+
+print("ERP посчитаны для всех стимулов")
+
+# Строим графики
+print("\nСтроим ERP-графики...")
+for stim_name, erp in erp_dict.items():
+    if erp is None:
+        print(f"  [!] {stim_name}: нет данных, пропускаем")
+        continue
+    n = len(all_epochs[stim_name])
+    path = plot_erp(stim_name, erp, n, OUTPUT_FOLDER)
+    print(f"  ✓ {stim_name} → {os.path.basename(path)}")
+
+print(f"\nГрафики сохранены в: {OUTPUT_FOLDER}")
+
