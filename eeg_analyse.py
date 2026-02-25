@@ -1,13 +1,11 @@
-﻿from pickletools import stackslice
-from matplotlib.lines import lineStyles
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 import os
 import glob
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-matplotlib.use('Agg')
 
 DATA_FOLDER = "D:\WORK\egg_analyse\EEG RAW DATA (INFOPOVODI)\EEG RAW DATA (INFOPOVODI)"
 OUTPUT_FOLDER = os.path.join(DATA_FOLDER, "results_ERP")
@@ -55,7 +53,7 @@ time_ms = np.arange(-25, 128) / SFREQ * 1000    # ось времени в мс
 COLORS = plt.cm.tab20.colors[:14]               # цвета для каналов - 14 цветов
 
 # Номера всех респондентов: 'pilot' = 0, остальные 1-16
-RESPONDENTS = ['0', '1', '2', '3', '4', '5', '6', '7',
+RESPONDENTS = ['1', '2', '3', '4', '5', '6', '7',
                '8', '9', '10', '11', '12', '13', '14', '15', '16']
 
 
@@ -64,7 +62,17 @@ def load_raw(filepath):
     """
     Загрузка файла N_RAW_DATA
     """
-    df = pd.read_csv(filepath, sep=';', skiprows=1, header=0)
+    with open(filepath, 'r', encoding='utf-8-sig') as f:
+        f.readline()
+        header_line = f.readline()
+
+    # Некоторые данные содержат ';' как разделитель, а другие - ','
+    # Считаем количество ';' и ',' и выбираем знак разделитель в данных 
+    n_semicolons = header_line.count(';')
+    n_commas     = header_line.count(',')
+    sep = ';' if n_semicolons > n_commas else ','
+
+    df = pd.read_csv(filepath, sep=sep, skiprows=1, header=0, encoding='utf-8-sig')
     df['Timestamp'] = pd.to_numeric(df['Timestamp'], errors='coerce')
     df = df.dropna(subset=['Timestamp']).reset_index(drop=True)
     return df
