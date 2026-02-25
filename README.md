@@ -22,10 +22,15 @@
 
 ## 🗂️ Структура репозитория
 ├── results_ERP/               # ERP-графики для всех 24 стимулов
+
 │   ├── ERP_VK_JAPAN_INFO.png
+
 │   ├── ERP_TG_JAPAN_INFO.png
+
 │   └── ...
+
 ├── eeg_analyse.py             # Основной скрипт анализа
+
 └── README.md
 
 ---
